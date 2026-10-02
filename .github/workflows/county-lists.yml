@@ -1,0 +1,25 @@
+name: County lists
+on:
+  schedule:
+    - cron: "0 13 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pdfplumber
+      - run: python scrape.py
+        env:
+          PARCELS_CSV_URL: ${{ vars.PARCELS_CSV_URL }}
+      - run: |
+          git config user.name "county-lists"
+          git config user.email "actions@users.noreply.github.com"
+          git add county
+          git diff --cached --quiet || git commit -m "Update county lists"
+          git push
