@@ -17,7 +17,7 @@ UA = {"User-Agent": "Mozilla/5.0 (weekly public-notice reader)"}
 DETAILS = "county/details.json"
 RENTCAST_KEY = os.environ.get("RENTCAST_API_KEY", "").strip()
 MONTHLY_CAP = 45  # the free RentCast plan includes 50 requests a month; stay under it
-ROW = re.compile(r"^(\d{3}-\d{3}-\d{3}-\d{3})\s+(.+?)\s+\$([\d,]+\.\d{2})\s*$")
+ROW = re.compile(r"(\d{3}-\d{3}-\d{3}-\d{3})\s+(.+?)\s+\$\s?([\d,]+\.\d{2})\b")
 
 
 def get(url):
@@ -31,13 +31,13 @@ def digits(v):
 def notice_links():
     html = get(INDEX).decode("utf-8", "ignore")
     links = sorted(set(re.findall(r"/DocumentCenter/View/\d+/[A-Za-z0-9\-_%]+", html)))
-    wanted = [l for l in links if re.search(r"default|power-to-sell", l, re.I)]
+    wanted = [l for l in links if re.search(r"default|power-to-sell|delinquen", l, re.I)]
     year = datetime.date.today().year
-    for y in (year, year - 1):
-        hit = [l for l in wanted if str(y) in l]
-        if hit:
-            return hit
-    return []
+    # Read this year's and last year's notices together. The county posts each
+    # year's notices at different times, so one year alone can come up empty.
+    hit = [l for l in wanted if str(year) in l or str(year - 1) in l]
+    print(len(hit), "notice links found for", year - 1, "and", year)
+    return hit
 
 
 def read_notice(link):
@@ -45,8 +45,8 @@ def read_notice(link):
     with pdfplumber.open(io.BytesIO(get(BASE + link))) as pdf:
         for page in pdf.pages:
             for line in (page.extract_text() or "").splitlines():
-                m = ROW.match(line.strip())
-                if m:
+                m = ROW.search(line.strip())
+                if m and not m.group(1) in found:
                     found[m.group(1)] = {"APN": m.group(1), "Owner": m.group(2).strip(),
                                          "Amount": "$" + m.group(3), "Source": link.rsplit("/", 1)[-1]}
     return found
@@ -164,11 +164,13 @@ def main():
         try:
             got = read_notice(link)
             print(len(got), "rows from", link)
-            rows.update(got)
+            for apn, row in got.items():
+                rows.setdefault(apn, row)
         except Exception as err:  # one bad PDF should not stop the rest
             print("Skipped", link, err)
     if not rows:
-        print("No rows found. Leaving the existing file untouched.")
+        print("No parcel rows could be read from any notice. The county may have changed its PDF layout.")
+        print("Leaving the existing list untouched.")
         sys.exit(1)
     try:
         lookup = parcel_addresses({digits(a) for a in rows})
